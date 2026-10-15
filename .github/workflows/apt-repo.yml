@@ -15,7 +15,20 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  publish-from-main:
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - name: Publish from main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run apt-repo.yml --repo "$GITHUB_REPOSITORY" --ref main
+
   publish:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:
@@ -60,3 +73,18 @@ jobs:
           path: public
       - id: deploy
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+
+      - name: Confirm the live site serves the new version
+        env:
+          SITE_URL: ${{ steps.deploy.outputs.page_url }}
+        run: |
+          version="$(dpkg-deb -f debs/*_amd64.deb Version)"
+          for attempt in $(seq 1 30); do
+            if curl -fsS "${SITE_URL}apt/dists/stable/main/binary-amd64/Packages?attempt=$attempt" | grep -qx "Version: $version"; then
+              echo "Live site serves $version"
+              exit 0
+            fi
+            sleep 20
+          done
+          echo "::error::The live apt site still does not serve $version after 10 minutes"
+          exit 1
